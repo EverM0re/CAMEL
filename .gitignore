@@ -1,0 +1,21 @@
+# Data and results are not redistributed
+data/
+results/
+testdata/
+cache/
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Local config overrides (keep the template, never a filled-in key)
+config.yaml
+!camel/config.yaml
+.env
+
+# OS
+.DS_Store

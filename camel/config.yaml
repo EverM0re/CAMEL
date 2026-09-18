@@ -1,0 +1,138 @@
+# ===========================================================================
+# CAMEL configuration
+# ---------------------------------------------------------------------------
+# Everything the experiments need is configured here. Values may still be
+# overridden by environment variables (env wins over this file), which is what
+# the hyper-parameter sweep uses internally.
+#
+# Precedence:  environment variable  >  this file  >  built-in default
+# ===========================================================================
+
+llm:
+  # "openai"    -> any OpenAI-compatible endpoint (most providers)
+  # "anthropic" -> an Anthropic-compatible endpoint
+  # base_url must END AT /v1 -- the SDK appends /chat/completions itself.
+  api: openai
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+
+  answer_model: "gpt-4o-mini"    # model that answers the questions
+  judge_model:  "gpt-4o-mini"    # model that grades the answers
+
+  # Request behaviour
+  max_retries: 6
+  timeout: 300           # reasoning models are slow; allow headroom
+
+
+# ---------------------------------------------------------------------------
+# Backbone transfer experiment (Appendix: Backbone transfer).
+# ---------------------------------------------------------------------------
+# Fill in two ALTERNATIVE answer models here, then run
+#     bash camel/scripts/run_backbone.sh
+# to repeat the k=5 main comparison under each one. The judge is deliberately
+# held FIXED across all backbones (judge_model above): changing the grader at
+# the same time as the system under test would confound the two, so only the
+# answer model varies.
+#
+# Leave name blank to skip that slot. base_url/api_key are optional and fall
+# back to the llm: block above, so a same-provider model needs only a name.
+backbones:
+  - name: ""             # e.g. "claude-sonnet-5"
+    label: ""  # short display name for the paper table
+    base_url: ""         # blank -> inherit llm.base_url
+    api_key: ""          # blank -> inherit llm.api_key
+    api: "openai"              # blank -> inherit llm.api ("openai" / "anthropic")
+
+  - name: ""             # e.g. "deepseek-v4-flash"
+    label: ""
+    base_url: ""
+    api_key: ""
+    api: "openai"
+
+
+paths:
+  # Relative to the repository root unless you give an absolute path.
+  root:        "./data"
+  results_dir: ""        # blank -> <root>/results
+  cache_dir:   ""        # blank -> <root>/cache
+
+  # SocialMemBench parquet dir (conversations/qa/networks/personas.parquet).
+  # Blank or missing -> streamed from the HuggingFace Hub on first use.
+  social_data: ""
+
+  # Embedding model (bge-m3) snapshot directory.
+  bge_model: "BAAI/bge-m3"
+
+  # Cross-encoder reranker. Blank disables reranking (falls back to fusion
+  # order). scripts/setup_baselines.sh downloads this for you.
+  reranker: "BAAI/bge-reranker-v2-m3"
+
+
+embedding:
+  # "cpu", "cuda", "cuda:3", or "auto" (pick the GPU with the most free memory).
+  # "auto" falls back to CPU when no GPU is visible, so it is safe everywhere.
+  # This is THE runtime knob: the cross-encoder reranker is ~90% of camel's
+  # per-question cost, and it is roughly 6x faster on a GPU (14.1s -> ~2.4s).
+  device: "auto"
+  batch_size: 256
+
+
+retrieval:
+  top_k: 50              # evidence messages passed to the answer model.
+                         # EverMem multi-hop items carry ~6.7 gold references
+                         # spread over months; at 30 the window was too tight
+                         # (multi-hop 8.7 vs oracle 100.0). GPU reranking makes
+                         # a wider window essentially free.
+  candidate_k: 200       # pool retrieved before reranking
+  max_context_chars: 32000
+  rrf_k: 60              # reciprocal-rank-fusion constant
+  # Cap the window at a fraction of the corpus. A fixed top_k that is <1% of a
+  # 10k-message corpus becomes ~29% of a 171-turn one, where it dilutes rather
+  # than helps (camel lost to hybrid on SocialMemBench for exactly this).
+  top_k_corpus_frac: 1.0   # 1.0 = no cap (see config.py: capping hurt)
+  top_k_min: 10
+
+
+graph:
+  hops: 2                # multi-hop expansion depth
+  anchors: 40            # how many top seeds seed the graph walk
+  budget_frac: 0.10      # MINIMUM share of top_k guaranteed to graph/alias
+                         # evidence; it otherwise competes on rerank score.
+                         # 0.35 (a reserved block) cost 14 pts vs hybrid.
+  alias_sim: 0.78        # cosine threshold for cross-role term alignment.
+                         # 0.86 linked nothing (mechanism inert); role-variant
+                         # synonyms are paraphrases, not near-duplicates.
+
+
+# Contextual Term Grounding: terminology alignment as typed relation
+# inference rather than a similarity threshold.
+term_align:
+  # "reranker" uses the bge cross-encoder already downloaded (zero-shot, works
+  #            out of the box); "nli" uses a natural-language-inference
+  #            cross-encoder and reads entailment probability directly (better,
+  #            needs nli_model set); "cosine" is the tuned-threshold baseline.
+  backend: "reranker"
+  fallback: "reranker"
+  nli_model: ""          # e.g. cross-encoder/nli-deberta-v3-xsmall
+  top_k: 5               # candidates per term (recall stage, no hard cut)
+  tau: 0.5               # entailment prob required in BOTH directions
+  cand_floor: 0.55       # permissive recall floor for candidate generation
+  related_frac: 0.7
+  calibrate: true        # derive tau from the observed score distribution;
+                         # a relevance cross-encoder is not calibrated, and at
+                         # a fixed tau=0.5 it labelled 100% of pairs equivalent
+  quantile: 0.85         # score quantile used as the entailment threshold
+
+features:
+  rerank: true           # cross-encoder reranking
+  rerank_depth: 48       # candidates actually scored by the cross-encoder.
+                         # This is the runtime bottleneck on CPU: 120 pairs
+                         # per question cost ~30s (97% of total runtime).
+  decompose: true        # split multi-hop questions into sub-queries
+  timeline: true         # date anchoring + deterministic date arithmetic
+  max_subqueries: 3
+  subquery_k: 12
+  # Window share reserved for per-sub-query hits. Without it, RRF let one
+  # endpoint of a "how long between A and B" question crowd out the other:
+  # all-anchors-retrieved measured 0.0% on EverMem multi-hop.
+  subquery_reserve_frac: 0.30

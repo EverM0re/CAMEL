@@ -1,0 +1,26 @@
+# CAMEL — runtime dependencies
+#
+# Versions are the ones the reported experiments were run with. Later minor
+# releases are expected to work; these are pinned so a reviewer can reproduce
+# the exact environment if they want to.
+
+# Core numerics and config
+numpy==2.0.2
+PyYAML==6.0.3
+
+# Retrieval: BGE-M3 embeddings and the bge-reranker-v2-m3 cross-encoder.
+# torch is the heaviest dependency; install the build matching your CUDA
+# version from https://pytorch.org if the default wheel does not.
+torch==2.8.0
+transformers==4.57.6
+sentence-transformers==5.1.2
+
+# Answer and judge models over any OpenAI-compatible endpoint.
+openai==2.33.0
+
+# Optional: only needed if llm.api is set to "anthropic" in config.yaml.
+# anthropic==0.40.0
+
+# SocialMemBench ships as parquet.
+pandas==2.3.3
+pyarrow==21.0.0
